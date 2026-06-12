@@ -117,7 +117,7 @@ data = load_data()
 
 st.sidebar.header("Options")
 view = st.sidebar.radio(
-    "View", ["Control Points", "Car Types"],
+    "View", ["Сводная статистика по ЙПХ", "Детализированная статистика с разбивкой по периодам и ЙПХ"],
     label_visibility="collapsed", key="view_radio",
 )
 st.sidebar.markdown(f"**{view}**")
