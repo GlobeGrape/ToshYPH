@@ -11,6 +11,12 @@ import streamlit as st
 
 STATS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats")
 
+# ── Custom basemap ─────────────────────────────────────────────────────────────
+# Leave empty to use OpenStreetMap.
+# Set to a tile URL with {z}/{x}/{y} placeholders to use your own tile server,
+# e.g. "https://tile.yourdomain.com/map/{z}/{x}/{y}.png"
+BASEMAP_TILE_URL = "https://core-renderer-tiles.maps.yandex.net/tiles?l=map&scale=2&x={x}&y={y}&z={z}&lang=ru_RU&maptype=transit&projection=web_mercator"
+
 DOW_NAMES     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MONTH_NAMES   = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 SLOT30_LABELS = [f"{h//2:02d}:{'30' if h%2 else '00'}" for h in range(48)]
@@ -117,6 +123,10 @@ view = st.sidebar.radio(
 st.sidebar.markdown(f"**{view}**")
 show_trend = st.sidebar.checkbox("Show trendline", value=True)
 show_table = st.sidebar.checkbox("Show data table", value=True)
+min_flow   = st.sidebar.number_input(
+    "Min total flow (hide below)", min_value=0, value=10_000, step=1_000,
+    help="Control points with total passages below this threshold are hidden everywhere."
+)
 st.sidebar.divider()
 
 
@@ -139,7 +149,7 @@ if view == "Control Points":
     cp_wide["kirish"]  = cp_wide["kirish"].astype(int)
     cp_wide["chiqish"] = cp_wide["chiqish"].astype(int)
     cp_wide["total"]   = cp_wide["kirish"] + cp_wide["chiqish"]
-    cp_wide = cp_wide.sort_values("total", ascending=False).reset_index(drop=True)
+    cp_wide = cp_wide[cp_wide["total"] >= min_flow].sort_values("total", ascending=False).reset_index(drop=True)
 
     # Sub-view toggle
     cp_subview = st.radio(
@@ -159,7 +169,7 @@ if view == "Control Points":
         if coords is None:
             st.warning("cp_coords.parquet not found — re-run aggregate_cars.py.")
         else:
-            coords = coords.copy()
+            coords = coords[coords["total"] >= min_flow].copy()
             coords["direction_type"] = "Both directions"
             coords.loc[coords["kirish"]  == 0, "direction_type"] = "Exit only (chiqish)"
             coords.loc[coords["chiqish"] == 0, "direction_type"] = "Entrance only (kirish)"
@@ -193,9 +203,18 @@ if view == "Control Points":
                     hovertemplate="%{text}<extra></extra>",
                 ))
 
+            if BASEMAP_TILE_URL:
+                map_style  = "white-bg"
+                map_layers = [{"below": "traces", "sourcetype": "raster",
+                                "source": [BASEMAP_TILE_URL]}]
+            else:
+                map_style  = "open-street-map"
+                map_layers = []
+
             fig_map.update_layout(
                 map=dict(
-                    style="open-street-map",
+                    style=map_style,
+                    layers=map_layers,
                     center=dict(lat=float(coords["actual_lat"].median()),
                                 lon=float(coords["actual_lon"].median())),
                     zoom=10,
@@ -203,8 +222,10 @@ if view == "Control Points":
                 height=650,
                 margin=dict(l=0, r=0, t=0, b=0),
                 legend=dict(
-                    bgcolor="rgba(255,255,255,0.88)",
-                    bordercolor="#ccc", borderwidth=1,
+                    bgcolor="rgba(20,20,20,0.82)",
+                    bordercolor="#555", borderwidth=1,
+                    font=dict(color="white", size=13),
+                    itemsizing="constant",
                     x=0.01, y=0.99, yanchor="top",
                 ),
             )
@@ -348,7 +369,8 @@ elif view == "Car Types":
         selected_cps = []
     else:
         if data["cp_coords"] is not None:
-            cp_sorted   = data["cp_coords"].sort_values("total", ascending=False)
+            cp_sorted    = (data["cp_coords"][data["cp_coords"]["total"] >= min_flow]
+                            .sort_values("total", ascending=False))
             all_cp_names = cp_sorted["object_name"].tolist()
             cp_totals    = dict(zip(cp_sorted["object_name"], cp_sorted["total"]))
         else:
