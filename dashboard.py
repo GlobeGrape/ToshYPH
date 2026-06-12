@@ -11,43 +11,51 @@ import streamlit as st
 
 STATS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats")
 
-DOW_NAMES   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+DOW_NAMES     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+MONTH_NAMES   = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 SLOT30_LABELS = [f"{h//2:02d}:{'30' if h%2 else '00'}" for h in range(48)]
 HOUR_LABELS   = [f"{h:02d}:00" for h in range(24)]
 
-COLOR_IN    = "#2ecc71"
-COLOR_OUT   = "#e74c3c"
-PALETTE     = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
+COLOR_IN  = "#2ecc71"
+COLOR_OUT = "#e74c3c"
+PALETTE   = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Data loading ──────────────────────────────────────────────────────────────
 
 @st.cache_data(show_spinner="Loading aggregated data…")
 def load_data() -> dict:
-    def rd(f):
+    def rd(f, required=True):
         path = os.path.join(STATS_DIR, f)
         if not os.path.exists(path):
-            st.error(f"Missing file: {path}\nRun aggregate_cars.py first.")
-            st.stop()
+            if required:
+                st.error(f"Missing file: {path}\nRun aggregate_cars.py first.")
+                st.stop()
+            return None
         return pd.read_parquet(path)
 
     return {
-        "cp":       rd("control_points.parquet"),
-        "cp_daily": rd("cp_daily.parquet"),
-        "dow":      rd("by_dow.parquet"),
-        "month":    rd("by_month.parquet"),
-        "hour":     rd("by_hour.parquet"),
-        "slot30":   rd("by_30min.parquet"),
+        "cp":         rd("control_points.parquet"),
+        "cp_daily":   rd("cp_daily.parquet"),
+        "cp_coords":  rd("cp_coords.parquet"),
+        "dow":        rd("by_dow.parquet"),
+        "month":      rd("by_month.parquet"),
+        "hour":       rd("by_hour.parquet"),
+        "slot30":     rd("by_30min.parquet"),
+        "dow_cp":     rd("by_dow_cp.parquet",    required=False),
+        "month_cp":   rd("by_month_cp.parquet",  required=False),
+        "hour_cp":    rd("by_hour_cp.parquet",   required=False),
+        "slot30_cp":  rd("by_30min_cp.parquet",  required=False),
     }
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def poly_trend(x: np.ndarray, y: np.ndarray, degree: int = 3) -> np.ndarray:
     if len(y) <= degree:
         return y.copy()
     coeffs = np.polyfit(x, y, degree)
-    trend  = np.polyval(coeffs, x)
-    return np.clip(trend, 0, None)
+    return np.clip(np.polyval(coeffs, x), 0, None)
 
 
 def type_label(t) -> str:
@@ -55,8 +63,8 @@ def type_label(t) -> str:
 
 
 def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3):
-    x_num = np.arange(len(y_vals), dtype=float)
-    trend  = poly_trend(x_num, np.array(y_vals, dtype=float), degree)
+    trend = poly_trend(np.arange(len(y_vals), dtype=float),
+                       np.array(y_vals, dtype=float), degree)
     fig.add_trace(go.Scatter(
         x=x_labels, y=trend,
         name=f"{name_prefix} trend",
@@ -65,8 +73,6 @@ def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3):
         showlegend=True,
     ))
 
-
-# ── Build car-type overview table ─────────────────────────────────────────────
 
 def build_type_table(df_raw, x_col, x_labels, selected_types) -> pd.DataFrame:
     rows = []
@@ -81,24 +87,34 @@ def build_type_table(df_raw, x_col, x_labels, selected_types) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+def filter_by_cps(df_cp_aware, selected_cps, x_col):
+    """Filter CP-aware data to selected CPs and sum avg_counts per (car_type, x_col)."""
+    filtered = df_cp_aware[df_cp_aware["object_name"].isin(selected_cps)].copy()
+    return (
+        filtered.groupby(["car_type", x_col])
+                .agg(avg_count=("avg_count", "sum"),
+                     total_count=("total_count", "sum"))
+                .reset_index()
+    )
+
+
+# ── App setup ─────────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Mashinque GK — Traffic Stats",
     page_icon="🚗",
     layout="wide",
 )
-
 st.title("Mashinque GK — Traffic Statistics")
 
 data = load_data()
 
-# Sidebar — global options
 st.sidebar.header("Options")
-view       = st.sidebar.radio("View", ["Control Points", "Car Types"], label_visibility="collapsed",
-                               key="view_radio",
-                               help="Choose what to explore")
-st.sidebar.markdown(f"**{'Control Points' if view == 'Control Points' else 'Car Types'}**")
+view = st.sidebar.radio(
+    "View", ["Control Points", "Car Types"],
+    label_visibility="collapsed", key="view_radio",
+)
+st.sidebar.markdown(f"**{view}**")
 show_trend = st.sidebar.checkbox("Show trendline", value=True)
 show_table = st.sidebar.checkbox("Show data table", value=True)
 st.sidebar.divider()
@@ -110,7 +126,6 @@ st.sidebar.divider()
 if view == "Control Points":
     cp_df = data["cp"].copy()
 
-    # Pivot to wide format
     cp_wide = (
         cp_df.pivot_table(index="object_name", columns="direction",
                           values="count", aggfunc="sum")
@@ -126,7 +141,11 @@ if view == "Control Points":
     cp_wide["total"]   = cp_wide["kirish"] + cp_wide["chiqish"]
     cp_wide = cp_wide.sort_values("total", ascending=False).reset_index(drop=True)
 
-    # Sidebar controls
+    # Sub-view toggle
+    cp_subview = st.radio(
+        "Sub-view", ["Charts", "Map"],
+        horizontal=True, key="cp_subview", label_visibility="collapsed"
+    )
     st.sidebar.subheader("Control Point")
     cp_names    = cp_wide["object_name"].tolist()
     selected_cp = st.sidebar.selectbox("Select", ["— All —"] + cp_names)
@@ -134,121 +153,176 @@ if view == "Control Points":
         "Direction", ["All", "Entrance (kirish)", "Exit (chiqish)"]
     )
 
-    # ── All control points overview ───────────────────────────────────────────
-    if selected_cp == "— All —":
-        top_n   = st.sidebar.slider("Show top N", 5, len(cp_wide), min(30, len(cp_wide)))
-        df_plot = cp_wide.head(top_n)
-
-        fig = go.Figure()
-
-        show_in  = dir_filter in ("All", "Entrance (kirish)")
-        show_out = dir_filter in ("All", "Exit (chiqish)")
-
-        if show_in:
-            fig.add_trace(go.Bar(
-                name="Entrance (kirish)",
-                y=df_plot["object_name"], x=df_plot["kirish"],
-                orientation="h", marker_color=COLOR_IN, opacity=0.85,
-                hovertemplate="%{y}<br>Entrance: %{x:,}<extra></extra>",
-            ))
-        if show_out:
-            fig.add_trace(go.Bar(
-                name="Exit (chiqish)",
-                y=df_plot["object_name"], x=df_plot["chiqish"],
-                orientation="h", marker_color=COLOR_OUT, opacity=0.85,
-                hovertemplate="%{y}<br>Exit: %{x:,}<extra></extra>",
-            ))
-
-        fig.update_layout(
-            title=f"Cars by Control Point — top {top_n}",
-            barmode="stack" if dir_filter == "All" else "relative",
-            height=max(400, top_n * 24),
-            xaxis_title="Total car passages",
-            yaxis=dict(autorange="reversed"),
-            legend=dict(orientation="h", y=1.02, x=0),
-            hovermode="y unified",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        if show_trend:
-            st.caption(
-                "ℹ Trendline is not shown for the overview (categorical axis). "
-                "Select a specific control point to see its daily trend."
-            )
-
-        if show_table:
-            st.subheader("Data Table")
-            display_df = cp_wide[["object_name", "kirish", "chiqish", "total"]].copy()
-            display_df.columns = ["Control Point", "Entrance", "Exit", "Total"]
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-    # ── Single control point drill-down ───────────────────────────────────────
-    else:
-        cp_row = cp_wide[cp_wide["object_name"] == selected_cp].iloc[0]
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total",            f"{int(cp_row['total']):,}")
-        m2.metric("Entrance (kirish)", f"{int(cp_row['kirish']):,}")
-        m3.metric("Exit (chiqish)",    f"{int(cp_row['chiqish']):,}")
-
-        st.subheader("Daily traffic over time")
-
-        cp_ts = (data["cp_daily"][data["cp_daily"]["object_name"] == selected_cp]
-                 .copy())
-        cp_ts["date_str"] = pd.to_datetime(cp_ts["date_str"])
-        cp_ts = cp_ts.sort_values("date_str")
-
-        if cp_ts.empty:
-            st.info("No daily data available for this control point.")
+    # ── MAP sub-view ──────────────────────────────────────────────────────────
+    if cp_subview == "Map":
+        coords = data["cp_coords"]
+        if coords is None:
+            st.warning("cp_coords.parquet not found — re-run aggregate_cars.py.")
         else:
-            fig2 = go.Figure()
+            coords = coords.copy()
+            coords["direction_type"] = "Both directions"
+            coords.loc[coords["kirish"]  == 0, "direction_type"] = "Exit only (chiqish)"
+            coords.loc[coords["chiqish"] == 0, "direction_type"] = "Entrance only (kirish)"
 
-            pairs = []
-            if dir_filter in ("All", "Entrance (kirish)"):
-                pairs.append(("kirish",  COLOR_IN,  "Entrance"))
-            if dir_filter in ("All", "Exit (chiqish)"):
-                pairs.append(("chiqish", COLOR_OUT, "Exit"))
+            color_map = {
+                "Both directions":         "#3498db",
+                "Entrance only (kirish)":  "#2ecc71",
+                "Exit only (chiqish)":     "#e74c3c",
+            }
 
-            for direction, color, label in pairs:
-                sub = cp_ts[cp_ts["direction"] == direction].sort_values("date_str")
+            fig_map = go.Figure()
+            for dtype, color in color_map.items():
+                sub = coords[coords["direction_type"] == dtype]
                 if sub.empty:
                     continue
-
-                fig2.add_trace(go.Scatter(
-                    x=sub["date_str"], y=sub["count"],
-                    name=label, mode="lines",
-                    line=dict(color=color, width=1.5),
-                    opacity=0.55,
-                    hovertemplate="%{x|%Y-%m-%d}<br>%{y:,} cars<extra>" + label + "</extra>",
+                fig_map.add_trace(go.Scattermap(
+                    lat=sub["actual_lat"],
+                    lon=sub["actual_lon"],
+                    mode="markers",
+                    name=dtype,
+                    marker=dict(
+                        size=np.log1p(sub["total"]) * 3,
+                        color=color, opacity=0.85, sizemin=8,
+                    ),
+                    text=sub.apply(
+                        lambda r: (f"<b>{r['object_name']}</b><br>"
+                                   f"Total: {int(r['total']):,}<br>"
+                                   f"Entrance: {int(r['kirish']):,} &nbsp; Exit: {int(r['chiqish']):,}"),
+                        axis=1,
+                    ),
+                    hovertemplate="%{text}<extra></extra>",
                 ))
 
-                if show_trend and len(sub) >= 4:
-                    x_num = np.arange(len(sub), dtype=float)
-                    trend  = poly_trend(x_num, sub["count"].values, degree=3)
-                    fig2.add_trace(go.Scatter(
-                        x=sub["date_str"], y=trend,
-                        name=f"{label} trend",
-                        mode="lines",
-                        line=dict(color=color, width=3, dash="dash"),
-                    ))
-
-            fig2.update_layout(
-                title=selected_cp,
-                xaxis_title="Date", yaxis_title="Cars per day",
-                height=420,
-                legend=dict(orientation="h", y=1.02, x=0),
-                hovermode="x unified",
+            fig_map.update_layout(
+                map=dict(
+                    style="open-street-map",
+                    center=dict(lat=float(coords["actual_lat"].median()),
+                                lon=float(coords["actual_lon"].median())),
+                    zoom=10,
+                ),
+                height=650,
+                margin=dict(l=0, r=0, t=0, b=0),
+                legend=dict(
+                    bgcolor="rgba(255,255,255,0.88)",
+                    bordercolor="#ccc", borderwidth=1,
+                    x=0.01, y=0.99, yanchor="top",
+                ),
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig_map, use_container_width=True)
 
             if show_table:
-                pivot = (cp_ts.pivot_table(
-                             index="date_str", columns="direction",
-                             values="count", aggfunc="sum")
-                             .reset_index())
-                pivot.columns.name = None
-                pivot["date_str"] = pivot["date_str"].dt.strftime("%Y-%m-%d")
-                st.dataframe(pivot, use_container_width=True, hide_index=True)
+                disp = coords[["object_name","actual_lat","actual_lon",
+                                "total","kirish","chiqish","direction_type"]].copy()
+                disp.columns = ["Control Point","Lat","Lon",
+                                 "Total","Entrance","Exit","Type"]
+                disp = disp.sort_values("Total", ascending=False)
+                st.dataframe(disp, use_container_width=True, hide_index=True)
+
+    # ── CHARTS sub-view ───────────────────────────────────────────────────────
+    else:
+        if selected_cp == "— All —":
+            top_n   = st.sidebar.slider("Show top N", 5, len(cp_wide), min(30, len(cp_wide)))
+            df_plot = cp_wide.head(top_n)
+
+            fig = go.Figure()
+            show_in  = dir_filter in ("All", "Entrance (kirish)")
+            show_out = dir_filter in ("All", "Exit (chiqish)")
+
+            if show_in:
+                fig.add_trace(go.Bar(
+                    name="Entrance (kirish)",
+                    y=df_plot["object_name"], x=df_plot["kirish"],
+                    orientation="h", marker_color=COLOR_IN, opacity=0.85,
+                    hovertemplate="%{y}<br>Entrance: %{x:,}<extra></extra>",
+                ))
+            if show_out:
+                fig.add_trace(go.Bar(
+                    name="Exit (chiqish)",
+                    y=df_plot["object_name"], x=df_plot["chiqish"],
+                    orientation="h", marker_color=COLOR_OUT, opacity=0.85,
+                    hovertemplate="%{y}<br>Exit: %{x:,}<extra></extra>",
+                ))
+
+            fig.update_layout(
+                title=f"Cars by Control Point — top {top_n}",
+                barmode="stack" if dir_filter == "All" else "relative",
+                height=max(400, top_n * 24),
+                xaxis_title="Total car passages",
+                yaxis=dict(autorange="reversed"),
+                # Legend at the bottom so it doesn't overlap the top bars
+                legend=dict(orientation="h", y=-0.12, yanchor="top", x=0),
+                margin=dict(t=50, b=90),
+                hovermode="y unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            if show_table:
+                st.subheader("Data Table")
+                disp = cp_wide[["object_name","kirish","chiqish","total"]].copy()
+                disp.columns = ["Control Point","Entrance","Exit","Total"]
+                st.dataframe(disp, use_container_width=True, hide_index=True)
+
+        else:
+            cp_row = cp_wide[cp_wide["object_name"] == selected_cp].iloc[0]
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total",             f"{int(cp_row['total']):,}")
+            m2.metric("Entrance (kirish)", f"{int(cp_row['kirish']):,}")
+            m3.metric("Exit (chiqish)",    f"{int(cp_row['chiqish']):,}")
+
+            st.subheader("Daily traffic over time")
+
+            cp_ts = data["cp_daily"][data["cp_daily"]["object_name"] == selected_cp].copy()
+            cp_ts["date_str"] = pd.to_datetime(cp_ts["date_str"])
+            cp_ts = cp_ts.sort_values("date_str")
+
+            if cp_ts.empty:
+                st.info("No daily data available for this control point.")
+            else:
+                fig2 = go.Figure()
+                pairs = []
+                if dir_filter in ("All", "Entrance (kirish)"):
+                    pairs.append(("kirish",  COLOR_IN,  "Entrance"))
+                if dir_filter in ("All", "Exit (chiqish)"):
+                    pairs.append(("chiqish", COLOR_OUT, "Exit"))
+
+                for direction, color, label in pairs:
+                    sub = cp_ts[cp_ts["direction"] == direction].sort_values("date_str")
+                    if sub.empty:
+                        continue
+                    fig2.add_trace(go.Scatter(
+                        x=sub["date_str"], y=sub["count"],
+                        name=label, mode="lines",
+                        line=dict(color=color, width=1.5), opacity=0.55,
+                        hovertemplate="%{x|%Y-%m-%d}<br>%{y:,} cars<extra>" + label + "</extra>",
+                    ))
+                    if show_trend and len(sub) >= 4:
+                        trend = poly_trend(np.arange(len(sub), dtype=float),
+                                           sub["count"].values, degree=3)
+                        fig2.add_trace(go.Scatter(
+                            x=sub["date_str"], y=trend,
+                            name=f"{label} trend", mode="lines",
+                            line=dict(color=color, width=3, dash="dash"),
+                        ))
+
+                fig2.update_layout(
+                    title=selected_cp,
+                    xaxis_title="Date", yaxis_title="Cars per day",
+                    height=420,
+                    legend=dict(orientation="h", y=1.0, yanchor="bottom", x=0),
+                    margin=dict(t=80),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+
+                if show_table:
+                    pivot = (cp_ts.pivot_table(
+                                 index="date_str", columns="direction",
+                                 values="count", aggfunc="sum")
+                                 .reset_index())
+                    pivot.columns.name = None
+                    pivot["date_str"] = pivot["date_str"].dt.strftime("%Y-%m-%d")
+                    st.dataframe(pivot, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -257,21 +331,34 @@ if view == "Control Points":
 elif view == "Car Types":
     all_types = sorted(
         data["dow"]["car_type"].unique().tolist(),
-        key=lambda x: (str(x).zfill(10))
+        key=lambda x: str(x).zfill(10),
     )
 
     st.sidebar.subheader("Car Types")
     selected_types = st.sidebar.multiselect(
-        "Select types",
-        options=all_types,
-        default=all_types,
+        "Select types", options=all_types, default=all_types,
         format_func=type_label,
     )
 
+    # ── Control point filter ──────────────────────────────────────────────────
+    st.sidebar.subheader("Filter by Control Points")
+    has_cp_data = data["dow_cp"] is not None
+    if not has_cp_data:
+        st.sidebar.caption("Re-run aggregate_cars.py to enable CP filtering.")
+        selected_cps = []
+    else:
+        all_cp_names = sorted(data["cp_coords"]["object_name"].tolist()
+                              if data["cp_coords"] is not None
+                              else data["dow_cp"]["object_name"].unique().tolist())
+        selected_cps = st.sidebar.multiselect(
+            "Control points (empty = all)",
+            options=all_cp_names,
+            default=[],
+        )
+
     st.sidebar.subheader("Time Period")
     period = st.sidebar.radio(
-        "Period",
-        ["Day of Week", "Month", "Hour", "30-Minute"],
+        "Period", ["Day of Week", "Month", "Hour", "30-Minute"],
         label_visibility="collapsed",
     )
 
@@ -279,79 +366,74 @@ elif view == "Car Types":
         st.warning("Select at least one car type from the sidebar.")
         st.stop()
 
-    # Map period → source data + axis config
     cfg = {
-        "Day of Week": dict(
-            src="dow",   x_col="dayofweek", x_labels=DOW_NAMES,
-            x_title="Day of Week",  y_title="Avg cars / day",
-        ),
-        "Month": dict(
-            src="month", x_col="month",     x_labels=MONTH_NAMES,
-            x_title="Month",        y_title="Avg cars / day",
-        ),
-        "Hour": dict(
-            src="hour",  x_col="hour",      x_labels=HOUR_LABELS,
-            x_title="Hour",         y_title="Avg cars / hour",
-        ),
-        "30-Minute": dict(
-            src="slot30",x_col="slot30",    x_labels=SLOT30_LABELS,
-            x_title="Time slot",    y_title="Avg cars / 30 min",
-        ),
+        "Day of Week": dict(src="dow",   src_cp="dow_cp",   x_col="dayofweek",
+                            x_labels=DOW_NAMES,    x_title="Day of Week", y_title="Avg cars / day"),
+        "Month":       dict(src="month", src_cp="month_cp", x_col="month",
+                            x_labels=MONTH_NAMES,  x_title="Month",       y_title="Avg cars / day"),
+        "Hour":        dict(src="hour",  src_cp="hour_cp",  x_col="hour",
+                            x_labels=HOUR_LABELS,  x_title="Hour",        y_title="Avg cars / hour"),
+        "30-Minute":   dict(src="slot30",src_cp="slot30_cp",x_col="slot30",
+                            x_labels=SLOT30_LABELS,x_title="Time slot",   y_title="Avg cars / 30 min"),
     }[period]
 
-    df_raw = data[cfg["src"]].copy()
-    df_raw["car_type"] = df_raw["car_type"].astype(str)
     x_col    = cfg["x_col"]
     x_labels = cfg["x_labels"]
     n_x      = len(x_labels)
     x_nums   = list(range(n_x))
-
-    # Degree for polynomial trend — lower for fewer points
     trend_degree = min(3, max(1, n_x - 2))
+
+    # Choose data source: CP-filtered or global
+    if selected_cps and has_cp_data and data[cfg["src_cp"]] is not None:
+        df_raw = filter_by_cps(data[cfg["src_cp"]], selected_cps, x_col)
+        cp_label = f" — {len(selected_cps)} CP(s) selected"
+    else:
+        df_raw = data[cfg["src"]].copy()
+        cp_label = ""
+
+    df_raw["car_type"] = df_raw["car_type"].astype(str)
 
     fig = go.Figure()
 
     for idx, ct in enumerate(selected_types):
-        color = PALETTE[idx % len(PALETTE)]
-        sub   = (df_raw[df_raw["car_type"] == str(ct)]
-                 .set_index(x_col)["avg_count"]
-                 .reindex(x_nums, fill_value=0.0))
+        color  = PALETTE[idx % len(PALETTE)]
+        sub    = (df_raw[df_raw["car_type"] == str(ct)]
+                  .set_index(x_col)["avg_count"]
+                  .reindex(x_nums, fill_value=0.0))
         y_vals = sub.values.astype(float)
 
         fig.add_trace(go.Bar(
             name=type_label(ct),
             x=x_labels, y=y_vals,
-            marker_color=color,
-            opacity=0.75,
+            marker_color=color, opacity=0.75,
             hovertemplate=f"{type_label(ct)}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
         ))
 
         if show_trend and np.any(y_vals > 0):
-            add_trend_trace(
-                fig, x_labels, y_vals, color,
-                name_prefix=type_label(ct),
-                degree=trend_degree,
-            )
+            add_trend_trace(fig, x_labels, y_vals, color,
+                            name_prefix=type_label(ct), degree=trend_degree)
 
     fig.update_layout(
-        title=f"Cars by {period} — average",
+        title=f"Cars by {period} — average{cp_label}",
         barmode="group" if len(selected_types) > 1 else "relative",
         height=500,
         xaxis_title=cfg["x_title"],
         yaxis_title=cfg["y_title"],
-        legend=dict(orientation="h", y=1.05, x=0, xanchor="left"),
+        # Legend below the chart so it doesn't crowd the bars
+        legend=dict(orientation="h", y=-0.18, yanchor="top", x=0),
+        margin=dict(b=110),
         hovermode="x unified",
         bargap=0.15,
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # Summary metrics
+    # Summary total metrics per car type
     total_row = df_raw[df_raw["car_type"].isin([str(t) for t in selected_types])]
     if not total_row.empty:
-        cols = st.columns(len(selected_types))
+        cols = st.columns(min(len(selected_types), 6))
         for i, ct in enumerate(selected_types):
-            sub_total = total_row[total_row["car_type"] == str(ct)]["total_count"].sum()
-            cols[i].metric(type_label(ct), f"{int(sub_total):,}")
+            v = total_row[total_row["car_type"] == str(ct)]["total_count"].sum()
+            cols[i % 6].metric(type_label(ct), f"{int(v):,}")
 
     if show_table:
         st.subheader("Data Table — avg per period")
