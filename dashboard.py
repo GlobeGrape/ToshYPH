@@ -347,13 +347,23 @@ elif view == "Car Types":
         st.sidebar.caption("Re-run aggregate_cars.py to enable CP filtering.")
         selected_cps = []
     else:
-        all_cp_names = sorted(data["cp_coords"]["object_name"].tolist()
-                              if data["cp_coords"] is not None
-                              else data["dow_cp"]["object_name"].unique().tolist())
+        if data["cp_coords"] is not None:
+            cp_sorted   = data["cp_coords"].sort_values("total", ascending=False)
+            all_cp_names = cp_sorted["object_name"].tolist()
+            cp_totals    = dict(zip(cp_sorted["object_name"], cp_sorted["total"]))
+        else:
+            all_cp_names = sorted(data["dow_cp"]["object_name"].unique().tolist())
+            cp_totals    = {}
+
+        def cp_label(name):
+            total = cp_totals.get(name, 0)
+            return f"{name}  ({total:,})" if total else name
+
         selected_cps = st.sidebar.multiselect(
             "Control points (empty = all)",
             options=all_cp_names,
             default=[],
+            format_func=cp_label,
         )
 
     st.sidebar.subheader("Time Period")
