@@ -133,7 +133,7 @@ st.sidebar.divider()
 # ══════════════════════════════════════════════════════════════════════════════
 # VIEW: CONTROL POINTS
 # ══════════════════════════════════════════════════════════════════════════════
-if view == "Control Points":
+if view == "Сводная статистика по ЙПХ":
     cp_df = data["cp"].copy()
 
     cp_wide = (
@@ -156,7 +156,7 @@ if view == "Control Points":
         "Sub-view", ["Charts", "Map"],
         horizontal=True, key="cp_subview", label_visibility="collapsed"
     )
-    st.sidebar.subheader("Control Point")
+    st.sidebar.subheader("Сводная статистика по ЙПХ")
     cp_names    = cp_wide["object_name"].tolist()
     selected_cp = st.sidebar.selectbox("Select", ["— All —"] + cp_names)
     dir_filter  = st.sidebar.radio(
@@ -349,13 +349,13 @@ if view == "Control Points":
 # ══════════════════════════════════════════════════════════════════════════════
 # VIEW: CAR TYPES
 # ══════════════════════════════════════════════════════════════════════════════
-elif view == "Car Types":
+elif view == "Детализированная статистика с разбивкой по периодам и ЙПХ":
     all_types = sorted(
         data["dow"]["car_type"].unique().tolist(),
         key=lambda x: str(x).zfill(10),
     )
 
-    st.sidebar.subheader("Car Types")
+    st.sidebar.subheader("Детализированная статистика с разбивкой по периодам и ЙПХ")
     selected_types = st.sidebar.multiselect(
         "Select types", options=all_types, default=all_types,
         format_func=type_label,
