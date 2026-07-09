@@ -77,6 +77,7 @@ def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3):
         mode="lines",
         line=dict(color=color, width=3, dash="dot"),
         showlegend=True,
+        hovertemplate=f"{name_prefix} trend<br>%{{x}}: %{{y:,.2f}}<extra></extra>",
     ))
 
 
@@ -461,14 +462,21 @@ elif view == "Детализированная статистика с разб�
                       .set_index(x_col)["avg_count"]
                       .reindex(x_nums, fill_value=0.0).values.astype(float))
 
+            total_vals = k_vals + c_vals
+            k_pct = np.where(total_vals > 0, k_vals / total_vals * 100, 0.0)
+            c_pct = np.where(total_vals > 0, c_vals / total_vals * 100, 0.0)
+
             fig.add_trace(go.Bar(
                 name=type_label(ct),
                 x=x_labels, y=k_vals,
+                customdata=k_pct,
                 marker_color=color, opacity=0.85,
                 offsetgroup=str(idx),
-                hovertemplate=f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+                hovertemplate=(
+                    f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}} (%{{customdata:.1f}}%)<extra></extra>"
+                ),
             ))
-            _cd = np.column_stack([c_vals, k_vals + c_vals])
+            _cd = np.column_stack([c_vals, total_vals, c_pct])
             fig.add_trace(go.Bar(
                 name=f"{type_label(ct)} chiqish",
                 x=x_labels, y=c_vals,
@@ -480,16 +488,14 @@ elif view == "Детализированная статистика с разб�
                 offsetgroup=str(idx),
                 showlegend=False,
                 hovertemplate=(
-                    f"{type_label(ct)} chiqish<br>%{{x}}: %{{customdata[0]:,.1f}}"
+                    f"{type_label(ct)} chiqish<br>%{{x}}: %{{customdata[0]:,.1f}} (%{{customdata[2]:.1f}}%)"
                     f"<br><b>Total: %{{customdata[1]:,.1f}}</b><extra></extra>"
                 ),
             ))
 
-            if show_trend:
-                total_vals = k_vals + c_vals
-                if np.any(total_vals > 0):
-                    add_trend_trace(fig, x_labels, total_vals, color,
-                                    name_prefix=type_label(ct), degree=trend_degree)
+            if show_trend and np.any(total_vals > 0):
+                add_trend_trace(fig, x_labels, total_vals, color,
+                                name_prefix=type_label(ct), degree=trend_degree)
         else:
             y_vals = (df_raw[ct_mask]
                       .set_index(x_col)["avg_count"]
