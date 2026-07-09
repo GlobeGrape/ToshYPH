@@ -313,10 +313,11 @@ if view == "Сводная статистика по ЙПХ":
                     sub = cp_ts[cp_ts["direction"] == direction].sort_values("date_str")
                     if sub.empty:
                         continue
+                    main_dash = "solid" if direction == "kirish" else "dash"
                     fig2.add_trace(go.Scatter(
                         x=sub["date_str"], y=sub["count"],
                         name=label, mode="lines",
-                        line=dict(color=color, width=1.5), opacity=0.55,
+                        line=dict(color=color, width=1.5, dash=main_dash), opacity=0.55,
                         hovertemplate="%{x|%Y-%m-%d}<br>%{y:,} cars<extra>" + label + "</extra>",
                     ))
                     if show_trend and len(sub) >= 4:
@@ -325,7 +326,7 @@ if view == "Сводная статистика по ЙПХ":
                         fig2.add_trace(go.Scatter(
                             x=sub["date_str"], y=trend,
                             name=f"{label} trend", mode="lines",
-                            line=dict(color=color, width=3, dash="dash"),
+                            line=dict(color=color, width=3, dash="dot"),
                         ))
 
                 fig2.update_layout(
