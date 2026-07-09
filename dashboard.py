@@ -470,16 +470,21 @@ elif view == "Детализированная статистика с разб�
                 legendgrouptitle_text=type_label(ct),
                 hovertemplate=f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
             ))
+            _cd = np.column_stack([c_vals, k_vals + c_vals])
             fig.add_trace(go.Bar(
                 name=f"{type_label(ct)} chiqish",
                 x=x_labels, y=c_vals,
                 base=k_vals,
+                customdata=_cd,
                 marker=dict(color=color,
                             pattern=dict(shape="/", fillmode="overlay", solidity=0.35)),
                 opacity=0.85,
                 offsetgroup=str(idx),
                 legendgroup=ct_str,
-                hovertemplate=f"{type_label(ct)} chiqish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+                hovertemplate=(
+                    f"{type_label(ct)} chiqish<br>%{{x}}: %{{customdata[0]:,.1f}}"
+                    f"<br><b>Total: %{{customdata[1]:,.1f}}</b><extra></extra>"
+                ),
             ))
 
             if show_trend:
