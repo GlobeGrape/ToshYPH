@@ -510,7 +510,7 @@ elif view == "Детализированная статистика с разб�
                 add_trend_trace(fig, x_labels, y_vals, color,
                                 name_prefix=type_label(ct), degree=trend_degree)
 
-    layout_kw = dict(
+    fig.update_layout(
         title=f"Cars by {period} — average{cp_label}{dir_label}",
         barmode="group",
         height=500,
@@ -521,15 +521,9 @@ elif view == "Детализированная статистика с разб�
         hovermode="x unified",
         bargap=0.15,
     )
-    if show_both_dirs:
-        layout_kw["annotations"] = [dict(
-            text="■ solid = kirish (entrance) · ▨ hatched = chiqish (exit)",
-            xref="paper", yref="paper", x=0, y=-0.12,
-            showarrow=False, font=dict(size=11, color="#999"), align="left",
-        )]
-        layout_kw["margin"]["b"] = 130
-    fig.update_layout(**layout_kw)
     st.plotly_chart(fig, use_container_width=True)
+    if show_both_dirs:
+        st.caption("■ solid = kirish (entrance) · ▨ hatched = chiqish (exit)")
 
     # Summary total metrics per car type
     total_row = df_raw[df_raw["car_type"].isin([str(t) for t in selected_types])]
