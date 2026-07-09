@@ -94,12 +94,15 @@ def build_type_table(df_raw, x_col, x_labels, selected_types) -> pd.DataFrame:
 
 
 def filter_by_cps(df_cp_aware, selected_cps, x_col, direction=None):
-    """Filter CP-aware data to selected CPs (and optionally direction), sum avg_counts."""
+    """Filter CP-aware data to selected CPs (and optionally direction), sum avg_counts.
+    When direction is None, keeps the direction column so the chart can split kirish/chiqish."""
     filtered = df_cp_aware[df_cp_aware["object_name"].isin(selected_cps)].copy()
     if direction is not None and "direction" in filtered.columns:
         filtered = filtered[filtered["direction"] == direction]
+    has_dir = "direction" in filtered.columns and direction is None
+    group_cols = ["car_type", "direction", x_col] if has_dir else ["car_type", x_col]
     return (
-        filtered.groupby(["car_type", x_col])
+        filtered.groupby(group_cols)
                 .agg(avg_count=("avg_count", "sum"),
                      total_count=("total_count", "sum"))
                 .reset_index()
@@ -427,25 +430,18 @@ elif view == "Детализированная статистика с разб�
     x_nums   = list(range(n_x))
     trend_degree = min(3, max(1, n_x - 2))
 
-    # Choose data source: CP-filtered or global, then apply direction
+    # Choose data source: CP-filtered or global, then apply direction.
+    # When "All" is selected, direction column is kept so the chart can show stacked kirish/chiqish.
     if selected_cps and has_cp_data and data[cfg["src_cp"]] is not None:
         df_raw = filter_by_cps(data[cfg["src_cp"]], selected_cps, x_col, direction=dir_val)
         cp_label = f" — {len(selected_cps)} CP(s) selected"
     else:
         df_raw = data[cfg["src"]].copy()
-        if "direction" in df_raw.columns:
-            if dir_val is not None:
-                df_raw = df_raw[df_raw["direction"] == dir_val]
-            else:
-                # "All" — collapse kirish+chiqish into a single row per (car_type, x_col)
-                df_raw = (
-                    df_raw.groupby(["car_type", x_col])
-                          .agg(avg_count=("avg_count", "sum"),
-                               total_count=("total_count", "sum"))
-                          .reset_index()
-                )
+        if "direction" in df_raw.columns and dir_val is not None:
+            df_raw = df_raw[df_raw["direction"] == dir_val]
         cp_label = ""
 
+    show_both_dirs = dir_val is None and "direction" in df_raw.columns
     dir_label = {"All": "", "Entrance (kirish)": " — Kirish", "Exit (chiqish)": " — Chiqish"}[dir_option]
 
     df_raw["car_type"] = df_raw["car_type"].astype(str)
@@ -453,30 +449,66 @@ elif view == "Детализированная статистика с разб�
     fig = go.Figure()
 
     for idx, ct in enumerate(selected_types):
-        color  = PALETTE[idx % len(PALETTE)]
-        sub    = (df_raw[df_raw["car_type"] == str(ct)]
-                  .set_index(x_col)["avg_count"]
-                  .reindex(x_nums, fill_value=0.0))
-        y_vals = sub.values.astype(float)
+        color   = PALETTE[idx % len(PALETTE)]
+        ct_str  = str(ct)
+        ct_mask = df_raw["car_type"] == ct_str
 
-        fig.add_trace(go.Bar(
-            name=type_label(ct),
-            x=x_labels, y=y_vals,
-            marker_color=color, opacity=0.75,
-            hovertemplate=f"{type_label(ct)}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
-        ))
+        if show_both_dirs:
+            k_vals = (df_raw[ct_mask & (df_raw["direction"] == "kirish")]
+                      .set_index(x_col)["avg_count"]
+                      .reindex(x_nums, fill_value=0.0).values.astype(float))
+            c_vals = (df_raw[ct_mask & (df_raw["direction"] == "chiqish")]
+                      .set_index(x_col)["avg_count"]
+                      .reindex(x_nums, fill_value=0.0).values.astype(float))
 
-        if show_trend and np.any(y_vals > 0):
-            add_trend_trace(fig, x_labels, y_vals, color,
-                            name_prefix=type_label(ct), degree=trend_degree)
+            fig.add_trace(go.Bar(
+                name=f"{type_label(ct)} kirish",
+                x=x_labels, y=k_vals,
+                marker_color=color, opacity=0.85,
+                offsetgroup=str(idx),
+                legendgroup=ct_str,
+                legendgrouptitle_text=type_label(ct),
+                hovertemplate=f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+            ))
+            fig.add_trace(go.Bar(
+                name=f"{type_label(ct)} chiqish",
+                x=x_labels, y=c_vals,
+                base=k_vals,
+                marker=dict(color=color,
+                            pattern=dict(shape="/", fillmode="overlay", solidity=0.35)),
+                opacity=0.85,
+                offsetgroup=str(idx),
+                legendgroup=ct_str,
+                hovertemplate=f"{type_label(ct)} chiqish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+            ))
+
+            if show_trend:
+                total_vals = k_vals + c_vals
+                if np.any(total_vals > 0):
+                    add_trend_trace(fig, x_labels, total_vals, color,
+                                    name_prefix=type_label(ct), degree=trend_degree)
+        else:
+            y_vals = (df_raw[ct_mask]
+                      .set_index(x_col)["avg_count"]
+                      .reindex(x_nums, fill_value=0.0).values.astype(float))
+
+            fig.add_trace(go.Bar(
+                name=type_label(ct),
+                x=x_labels, y=y_vals,
+                marker_color=color, opacity=0.75,
+                hovertemplate=f"{type_label(ct)}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+            ))
+
+            if show_trend and np.any(y_vals > 0):
+                add_trend_trace(fig, x_labels, y_vals, color,
+                                name_prefix=type_label(ct), degree=trend_degree)
 
     fig.update_layout(
         title=f"Cars by {period} — average{cp_label}{dir_label}",
-        barmode="group" if len(selected_types) > 1 else "relative",
+        barmode="group",
         height=500,
         xaxis_title=cfg["x_title"],
         yaxis_title=cfg["y_title"],
-        # Legend below the chart so it doesn't crowd the bars
         legend=dict(orientation="h", y=-0.18, yanchor="top", x=0),
         margin=dict(b=110),
         hovermode="x unified",
@@ -494,5 +526,11 @@ elif view == "Детализированная статистика с разб�
 
     if show_table:
         st.subheader("Data Table — avg per period")
-        table_df = build_type_table(df_raw, x_col, x_labels, selected_types)
+        df_for_table = (
+            df_raw.groupby(["car_type", x_col])
+                  .agg(avg_count=("avg_count", "sum"), total_count=("total_count", "sum"))
+                  .reset_index()
+            if show_both_dirs else df_raw
+        )
+        table_df = build_type_table(df_for_table, x_col, x_labels, selected_types)
         st.dataframe(table_df, use_container_width=True, hide_index=True)
