@@ -93,9 +93,11 @@ def build_type_table(df_raw, x_col, x_labels, selected_types) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def filter_by_cps(df_cp_aware, selected_cps, x_col):
-    """Filter CP-aware data to selected CPs and sum avg_counts per (car_type, x_col)."""
+def filter_by_cps(df_cp_aware, selected_cps, x_col, direction=None):
+    """Filter CP-aware data to selected CPs (and optionally direction), sum avg_counts."""
     filtered = df_cp_aware[df_cp_aware["object_name"].isin(selected_cps)].copy()
+    if direction is not None and "direction" in filtered.columns:
+        filtered = filtered[filtered["direction"] == direction]
     return (
         filtered.groupby(["car_type", x_col])
                 .agg(avg_count=("avg_count", "sum"),
@@ -394,6 +396,15 @@ elif view == "Детализированная статистика с разб�
         label_visibility="collapsed",
     )
 
+    st.sidebar.subheader("Direction")
+    dir_option = st.sidebar.radio(
+        "Direction",
+        ["All", "Entrance (kirish)", "Exit (chiqish)"],
+        label_visibility="collapsed",
+        key="ct_direction",
+    )
+    dir_val = {"All": None, "Entrance (kirish)": "kirish", "Exit (chiqish)": "chiqish"}[dir_option]
+
     if not selected_types:
         st.warning("Select at least one car type from the sidebar.")
         st.stop()
@@ -415,13 +426,26 @@ elif view == "Детализированная статистика с разб�
     x_nums   = list(range(n_x))
     trend_degree = min(3, max(1, n_x - 2))
 
-    # Choose data source: CP-filtered or global
+    # Choose data source: CP-filtered or global, then apply direction
     if selected_cps and has_cp_data and data[cfg["src_cp"]] is not None:
-        df_raw = filter_by_cps(data[cfg["src_cp"]], selected_cps, x_col)
+        df_raw = filter_by_cps(data[cfg["src_cp"]], selected_cps, x_col, direction=dir_val)
         cp_label = f" — {len(selected_cps)} CP(s) selected"
     else:
         df_raw = data[cfg["src"]].copy()
+        if "direction" in df_raw.columns:
+            if dir_val is not None:
+                df_raw = df_raw[df_raw["direction"] == dir_val]
+            else:
+                # "All" — collapse kirish+chiqish into a single row per (car_type, x_col)
+                df_raw = (
+                    df_raw.groupby(["car_type", x_col])
+                          .agg(avg_count=("avg_count", "sum"),
+                               total_count=("total_count", "sum"))
+                          .reset_index()
+                )
         cp_label = ""
+
+    dir_label = {"All": "", "Entrance (kirish)": " — Kirish", "Exit (chiqish)": " — Chiqish"}[dir_option]
 
     df_raw["car_type"] = df_raw["car_type"].astype(str)
 
@@ -446,7 +470,7 @@ elif view == "Детализированная статистика с разб�
                             name_prefix=type_label(ct), degree=trend_degree)
 
     fig.update_layout(
-        title=f"Cars by {period} — average{cp_label}",
+        title=f"Cars by {period} — average{cp_label}{dir_label}",
         barmode="group" if len(selected_types) > 1 else "relative",
         height=500,
         xaxis_title=cfg["x_title"],
