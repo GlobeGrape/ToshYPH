@@ -462,12 +462,10 @@ elif view == "Детализированная статистика с разб�
                       .reindex(x_nums, fill_value=0.0).values.astype(float))
 
             fig.add_trace(go.Bar(
-                name=f"{type_label(ct)} kirish",
+                name=type_label(ct),
                 x=x_labels, y=k_vals,
                 marker_color=color, opacity=0.85,
                 offsetgroup=str(idx),
-                legendgroup=ct_str,
-                legendgrouptitle_text=type_label(ct),
                 hovertemplate=f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
             ))
             _cd = np.column_stack([c_vals, k_vals + c_vals])
@@ -480,7 +478,7 @@ elif view == "Детализированная статистика с разб�
                             pattern=dict(shape="/", fillmode="overlay", solidity=0.35)),
                 opacity=0.85,
                 offsetgroup=str(idx),
-                legendgroup=ct_str,
+                showlegend=False,
                 hovertemplate=(
                     f"{type_label(ct)} chiqish<br>%{{x}}: %{{customdata[0]:,.1f}}"
                     f"<br><b>Total: %{{customdata[1]:,.1f}}</b><extra></extra>"
@@ -512,7 +510,7 @@ elif view == "Детализированная статистика с разб�
                 add_trend_trace(fig, x_labels, y_vals, color,
                                 name_prefix=type_label(ct), degree=trend_degree)
 
-    fig.update_layout(
+    layout_kw = dict(
         title=f"Cars by {period} — average{cp_label}{dir_label}",
         barmode="group",
         height=500,
@@ -523,6 +521,14 @@ elif view == "Детализированная статистика с разб�
         hovermode="x unified",
         bargap=0.15,
     )
+    if show_both_dirs:
+        layout_kw["annotations"] = [dict(
+            text="■ solid = kirish (entrance) · ▨ hatched = chiqish (exit)",
+            xref="paper", yref="paper", x=0, y=-0.12,
+            showarrow=False, font=dict(size=11, color="#999"), align="left",
+        )]
+        layout_kw["margin"]["b"] = 130
+    fig.update_layout(**layout_kw)
     st.plotly_chart(fig, use_container_width=True)
 
     # Summary total metrics per car type
