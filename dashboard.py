@@ -497,10 +497,14 @@ elif view == "Детализированная статистика с разб�
                       .set_index(x_col)["avg_count"]
                       .reindex(x_nums, fill_value=0.0).values.astype(float))
 
+            marker_props = dict(color=color)
+            if dir_val == "chiqish":
+                marker_props["pattern"] = dict(shape="/", fillmode="overlay", solidity=0.35)
+
             fig.add_trace(go.Bar(
                 name=type_label(ct),
                 x=x_labels, y=y_vals,
-                marker_color=color, opacity=0.75,
+                marker=marker_props, opacity=0.75,
                 hovertemplate=f"{type_label(ct)}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
             ))
 
