@@ -48,10 +48,15 @@ def load_data() -> dict:
         "month":      rd("by_month.parquet"),
         "hour":       rd("by_hour.parquet"),
         "slot30":     rd("by_30min.parquet"),
-        "dow_cp":     rd("by_dow_cp.parquet",    required=False),
-        "month_cp":   rd("by_month_cp.parquet",  required=False),
-        "hour_cp":    rd("by_hour_cp.parquet",   required=False),
-        "slot30_cp":  rd("by_30min_cp.parquet",  required=False),
+        "dow_cp":           rd("by_dow_cp.parquet",       required=False),
+        "month_cp":         rd("by_month_cp.parquet",     required=False),
+        "hour_cp":          rd("by_hour_cp.parquet",      required=False),
+        "slot30_cp":        rd("by_30min_cp.parquet",     required=False),
+        "transit_summary":  rd("transit_summary.parquet", required=False),
+        "transit_dow":      rd("transit_by_dow.parquet",  required=False),
+        "transit_month":    rd("transit_by_month.parquet",required=False),
+        "transit_hour":     rd("transit_by_hour.parquet", required=False),
+        "transit_slot30":   rd("transit_by_30min.parquet",required=False),
     }
 
 
@@ -123,7 +128,11 @@ data = load_data()
 
 st.sidebar.header("Options")
 view = st.sidebar.radio(
-    "View", ["Сводная статистика по ЙПХ", "Детализированная статистика с разбивкой по периодам и ЙПХ"],
+    "View", [
+        "Сводная статистика по ЙПХ",
+        "Детализированная статистика с разбивкой по периодам и ЙПХ",
+        "Transit Flows",
+    ],
     label_visibility="collapsed", key="view_radio",
 )
 st.sidebar.markdown(f"**{view}**")
@@ -549,3 +558,166 @@ elif view == "Детализированная статистика с разб�
         )
         table_df = build_type_table(df_for_table, x_col, x_labels, selected_types)
         st.dataframe(table_df, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VIEW: TRANSIT FLOWS
+# ══════════════════════════════════════════════════════════════════════════════
+elif view == "Transit Flows":
+    if data["transit_summary"] is None:
+        st.warning("Transit data not found. Run `analyze_transit.py` first.")
+        st.stop()
+
+    summary = data["transit_summary"].copy()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _shorten(name: str, n: int = 22) -> str:
+        return name if len(name) <= n else name[:n] + "…"
+
+    def route_label(fr, to):
+        return f"{_shorten(fr)} → {_shorten(to)}"
+
+    # ── Sidebar ───────────────────────────────────────────────────────────────
+    st.sidebar.subheader("Transit Flows")
+
+    all_from = sorted(summary["from_cp"].unique().tolist())
+    all_to   = sorted(summary["to_cp"].unique().tolist())
+
+    # Sort CPs by total transit volume for easier picking
+    from_totals = summary.groupby("from_cp")["total_count"].sum()
+    to_totals   = summary.groupby("to_cp")["total_count"].sum()
+    all_from_sorted = from_totals.sort_values(ascending=False).index.tolist()
+    all_to_sorted   = to_totals.sort_values(ascending=False).index.tolist()
+
+    def _cp_from_label(name):
+        return f"{name}  ({int(from_totals.get(name, 0)):,})"
+
+    def _cp_to_label(name):
+        return f"{name}  ({int(to_totals.get(name, 0)):,})"
+
+    sel_from = st.sidebar.multiselect(
+        "Source CP (kirish at)", all_from_sorted, default=[],
+        format_func=_cp_from_label,
+    )
+    sel_to = st.sidebar.multiselect(
+        "Destination CP (chiqish at)", all_to_sorted, default=[],
+        format_func=_cp_to_label,
+    )
+    top_n = st.sidebar.slider("Top N routes", min_value=5, max_value=50, value=20, step=5)
+
+    st.sidebar.subheader("Time Period")
+    period = st.sidebar.radio(
+        "Period", ["Hour", "Day of Week", "Month", "30-Minute"],
+        label_visibility="collapsed", key="transit_period",
+    )
+
+    # ── Filter summary ────────────────────────────────────────────────────────
+    filt = summary.copy()
+    if sel_from:
+        filt = filt[filt["from_cp"].isin(sel_from)]
+    if sel_to:
+        filt = filt[filt["to_cp"].isin(sel_to)]
+
+    filt = filt.nlargest(top_n, "total_count").reset_index(drop=True)
+
+    if filt.empty:
+        st.info("No transit flows match the current filter.")
+        st.stop()
+
+    filt["route"] = filt.apply(lambda r: route_label(r["from_cp"], r["to_cp"]), axis=1)
+    total_transit = int(filt["total_count"].sum())
+
+    # ── Chart 1: Top routes ───────────────────────────────────────────────────
+    filter_desc = ""
+    if sel_from:
+        filter_desc += f" from {len(sel_from)} CP(s)"
+    if sel_to:
+        filter_desc += f" to {len(sel_to)} CP(s)"
+    st.subheader(f"Top {len(filt)} transit routes{filter_desc}  —  {total_transit:,} total events")
+
+    colors = [PALETTE[i % len(PALETTE)] for i in range(len(filt))]
+    fig1 = go.Figure(go.Bar(
+        x=filt["total_count"],
+        y=filt["route"],
+        orientation="h",
+        marker_color=colors,
+        customdata=filt[["from_cp", "to_cp", "total_count"]].values,
+        hovertemplate=(
+            "<b>%{customdata[0]}</b><br>"
+            "→ <b>%{customdata[1]}</b><br>"
+            "%{customdata[2]:,.0f} transit events<extra></extra>"
+        ),
+    ))
+    fig1.update_layout(
+        height=max(300, len(filt) * 30 + 80),
+        xaxis_title="Total transit events",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=0, r=20, t=20, b=40),
+    )
+    st.plotly_chart(fig1, use_container_width=True)
+
+    if show_table:
+        disp = filt[["route", "total_count"]].copy()
+        disp.columns = ["Route", "Transit events"]
+        st.dataframe(disp, use_container_width=True, hide_index=True)
+
+    # ── Chart 2: Time distribution ────────────────────────────────────────────
+    t_cfg = {
+        "Hour":        dict(src="transit_hour",   x_col="hour",      x_labels=HOUR_LABELS,   x_title="Hour",        y_title="Avg transit / hour"),
+        "Day of Week": dict(src="transit_dow",    x_col="dayofweek", x_labels=DOW_NAMES,     x_title="Day of Week", y_title="Avg transit / day"),
+        "Month":       dict(src="transit_month",  x_col="month",     x_labels=MONTH_NAMES,   x_title="Month",       y_title="Avg transit / day"),
+        "30-Minute":   dict(src="transit_slot30", x_col="slot30",    x_labels=SLOT30_LABELS, x_title="Time slot",   y_title="Avg transit / 30 min"),
+    }[period]
+
+    td = data[t_cfg["src"]]
+    if td is None:
+        st.info("Time-period transit data not found — re-run analyze_transit.py.")
+    else:
+        st.subheader(f"Transit by {period}")
+
+        # Filter time parquet to the selected routes
+        route_key = filt[["from_cp", "to_cp"]].drop_duplicates()
+        td_filt = td.merge(route_key, on=["from_cp", "to_cp"])
+
+        x_col    = t_cfg["x_col"]
+        x_labels = t_cfg["x_labels"]
+        x_nums   = list(range(len(x_labels)))
+        trend_degree = min(3, max(1, len(x_labels) - 2))
+
+        if len(route_key) == 1:
+            # Single route — show directly
+            sub = (td_filt.set_index(x_col)["avg_count"]
+                          .reindex(x_nums, fill_value=0.0))
+            traces = [(sub.values.astype(float), route_label(
+                filt.iloc[0]["from_cp"], filt.iloc[0]["to_cp"]), PALETTE[0])]
+        else:
+            # Multiple routes — show aggregated total + optionally per-route
+            agg = (td_filt.groupby(x_col)
+                          .agg(avg_count=("avg_count", "sum"))
+                          .reindex(x_nums, fill_value=0.0))
+            traces = [(agg["avg_count"].values.astype(float),
+                       f"All {len(route_key)} selected routes", PALETTE[0])]
+
+        fig2 = go.Figure()
+        for y_vals, name, color in traces:
+            fig2.add_trace(go.Bar(
+                name=name,
+                x=x_labels, y=y_vals,
+                marker_color=color, opacity=0.80,
+                hovertemplate=f"{name}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
+            ))
+            if show_trend and np.any(y_vals > 0):
+                add_trend_trace(fig2, x_labels, y_vals, color,
+                                name_prefix=name, degree=trend_degree)
+
+        fig2.update_layout(
+            barmode="group",
+            height=430,
+            xaxis_title=t_cfg["x_title"],
+            yaxis_title=t_cfg["y_title"],
+            legend=dict(orientation="h", y=-0.18, yanchor="top", x=0),
+            margin=dict(b=100),
+            hovermode="x unified",
+            bargap=0.15,
+        )
+        st.plotly_chart(fig2, use_container_width=True)
