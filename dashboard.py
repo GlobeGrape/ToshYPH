@@ -35,8 +35,9 @@ def load_data() -> dict:
         path = os.path.join(STATS_DIR, f)
         if not os.path.exists(path):
             if required:
-                st.error(f"Missing file: {path}\nRun aggregate_cars.py first.")
-                st.stop()
+                raise FileNotFoundError(
+                    f"Missing file: {path}\nRun aggregate_cars.py first."
+                )
             return None
         return pd.read_parquet(path)
 
@@ -124,7 +125,11 @@ st.set_page_config(
 )
 st.title("Mashinque GK — Traffic Statistics")
 
-data = load_data()
+try:
+    data = load_data()
+except FileNotFoundError as _exc:
+    st.error(str(_exc))
+    st.stop()
 
 st.sidebar.header("Options")
 view = st.sidebar.radio(
