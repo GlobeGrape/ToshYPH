@@ -74,7 +74,7 @@ def type_label(t) -> str:
     return f"Type {t}"
 
 
-def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3):
+def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3, legendgroup=None):
     trend = poly_trend(np.arange(len(y_vals), dtype=float),
                        np.array(y_vals, dtype=float), degree)
     fig.add_trace(go.Scatter(
@@ -83,6 +83,7 @@ def add_trend_trace(fig, x_labels, y_vals, color, name_prefix, degree=3):
         mode="lines",
         line=dict(color=color, width=3, dash="dot"),
         showlegend=True,
+        legendgroup=legendgroup,
         hovertemplate=f"{name_prefix} trend<br>%{{x}}: %{{y:,.2f}}<extra></extra>",
     ))
 
@@ -467,6 +468,9 @@ elif view == "Детализированная статистика с разб�
         color   = PALETTE[idx % len(PALETTE)]
         ct_str  = str(ct)
         ct_mask = df_raw["car_type"] == ct_str
+        # All traces for this type (kirish bar, chiqish bar, trend line) share a
+        # legendgroup so the single legend entry hides/shows the whole type at once.
+        group = f"type-{ct_str}"
 
         if show_both_dirs:
             k_vals = (df_raw[ct_mask & (df_raw["direction"] == "kirish")]
@@ -486,6 +490,7 @@ elif view == "Детализированная статистика с разб�
                 customdata=k_pct,
                 marker_color=color, opacity=0.85,
                 offsetgroup=str(idx),
+                legendgroup=group,
                 hovertemplate=(
                     f"{type_label(ct)} kirish<br>%{{x}}: %{{y:,.1f}} (%{{customdata:.1f}}%)<extra></extra>"
                 ),
@@ -500,6 +505,7 @@ elif view == "Детализированная статистика с разб�
                             pattern=dict(shape="/", fillmode="overlay", solidity=0.35)),
                 opacity=0.85,
                 offsetgroup=str(idx),
+                legendgroup=group,
                 showlegend=False,
                 hovertemplate=(
                     f"{type_label(ct)} chiqish<br>%{{x}}: %{{customdata[0]:,.1f}} (%{{customdata[2]:.1f}}%)"
@@ -509,7 +515,8 @@ elif view == "Детализированная статистика с разб�
 
             if show_trend and np.any(total_vals > 0):
                 add_trend_trace(fig, x_labels, total_vals, color,
-                                name_prefix=type_label(ct), degree=trend_degree)
+                                name_prefix=type_label(ct), degree=trend_degree,
+                                legendgroup=group)
         else:
             y_vals = (df_raw[ct_mask]
                       .set_index(x_col)["avg_count"]
@@ -523,12 +530,14 @@ elif view == "Детализированная статистика с разб�
                 name=type_label(ct),
                 x=x_labels, y=y_vals,
                 marker=marker_props, opacity=0.75,
+                legendgroup=group,
                 hovertemplate=f"{type_label(ct)}<br>%{{x}}: %{{y:,.1f}}<extra></extra>",
             ))
 
             if show_trend and np.any(y_vals > 0):
                 add_trend_trace(fig, x_labels, y_vals, color,
-                                name_prefix=type_label(ct), degree=trend_degree)
+                                name_prefix=type_label(ct), degree=trend_degree,
+                                legendgroup=group)
 
     fig.update_layout(
         title=f"Cars by {period} — average{cp_label}{dir_label}",
@@ -536,7 +545,7 @@ elif view == "Детализированная статистика с разб�
         height=500,
         xaxis_title=cfg["x_title"],
         yaxis_title=cfg["y_title"],
-        legend=dict(orientation="h", y=-0.18, yanchor="top", x=0),
+        legend=dict(orientation="h", y=-0.18, yanchor="top", x=0, groupclick="togglegroup"),
         margin=dict(b=110),
         hovermode="x unified",
         bargap=0.15,
